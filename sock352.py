@@ -4,6 +4,7 @@ import socket as syssock
 import struct
 import sys
 from threading import Thread
+import time
 
 # Acknowledgement number
 ACK_NO = 1
@@ -42,12 +43,20 @@ class socket:
         return
 
     # Bind to a port
+    # Which probably means to set the variables equal tp
+    # the port and the address to the address give.
     def bind(self,address):
+        try:
+            self.sock = syssock.socket(syssock.AF_INET, syssock.SOCK_DGRAM)
+        except syssock.error:
+            print "Error with creating socket."
+            return
         return 
 
     # This function is to create a connection from client perspective
     # For the server, we will bind in this function.
-    def connect(self,address):  # fill in your code here 
+    def connect(self,address):  # fill in your code here
+        (self.address, self.port) = address
         return 
 
     # ignore this function
@@ -57,9 +66,14 @@ class socket:
 
     # This function is to create a connection from the server perspective.
     def accept(self):
-        # clientsocket = self.socket[0]
+        try:
+            sock = syssock.socket(syssock.AF_INET, syssock.SOCK_DGRAM)
+            return (sock, address)
+        except syssock.error:
+            print "Error with creating socket."
+            return (None, None)
         (clientsocket, address) = (1,1)  # change this to your code 
-        return (clientsocket,address)
+        return (sock,address)
 
     # Close connection if last packet received
     # Otherwise, set close variable
@@ -78,24 +92,49 @@ class socket:
     # resend the data. While acks are beings sent, we mark for which
     # packets, the acks are received.
     def send(self,buffer):
+        # get the length of the buffer and split it according to the
+        # the size of the packets (65k bytes + header). The value of N
+        # should be the size of the buffer divided by 65 k. Maybe this will change.
+        lenbuff = len(buffer)
+        N_PACKETS_LIMIT = lenbuff/65000
+
+        # A "pointer" which holds which part of the buffer
+        # we are sending currently.
+        ptr = 0
 
         # function to receive acknowledgments
-        def recvacks(self, buffer):
-            self.sock.recv()
+        # The function receives the buffer and N, as arguments.
+        def recvacks(buffer, n_packets):
+            num_acks = 0
+            start_time = time.time()
+            while num_acks < n_packets and (time.time() - start_time) < 100:
+                ack = self.sock.recv()
+
+
             return
 
+        # Variable to count the number of bytes sent.
         bytessent = 0     # fill in your code here
 
-        sizeofBuffer = sys.getsizeof(buffer)
 
-        while not bytessent == sizeofBuffer:
+        while not bytessent == lenbuff:
+            packet = struct.pack(fmt='i',str=self.header)
+            if packet + 65000 < lenbuff:
+                packet += "\n" + buffer[ptr:(ptr+65000)]
+            else:
+                packet += "\n" + buffer[ptr:lenbuff-1]
+
             thread_send = Thread(target=self.sock.send, args=(buffer))
             thread_send.start()
 
-
-            thread_recv = Thread(target=syssock._realsocket.recv, )
-            thread_recv.start()
             ack_no = thread_recv.join(timeout=100)
+            if ptr > lenbuff - 65000:
+                pass
+            else:
+                ptr += 65000
+
+        thread_recv = Thread(target=recvacks, args=(buffer, N_PACKETS_LIMIT))
+        thread_recv.start()
             # when we send we want to get an acknowledgement back
         return bytessent
 
@@ -104,21 +143,24 @@ class socket:
     # But, the harder part is to rearrange all of the packets in the order they should
     # be in. A solution I was thinking of is to sort by SYN values.
     def recv(self,nbytes):
-        bytesreceived = 0     # fill in your code here
+        bytesreceived = ""     # fill in your code here
+        packet_list = []
         while not bytesreceived == nbytes:
             thread_recv = Thread(target=self.sock.recv, args=(nbytes))
             #recv
             thread_recv.start()
             data_recv = thread_recv.join(timeout=0.1)
-            bytesreceived += sys.getsizeof(data_recv)
+            bytesreceived += + sys.getsizeof(data_recv)
+            packet_list.append(data_recv)
 
             # send acknowledgement
-            thread_send = Thread(target=self.sock.send,args=(ACK_NO))
-            thread_send.start()
-            thread_send.join(timeout=0.1)
-        return bytesreceived
+            self.sock.send(ACK_NO)
 
+        return self.reorder()
+        # return bytesreceived
 
+    def reorder(self, packet_list):
+        packet_list.sort()
     
 
 
