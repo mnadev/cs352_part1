@@ -72,7 +72,7 @@ class socket:
             self.window = b'\x00'
 
             # Each payload will be 65k bytes maximum
-            self.payload_len = (65000).to_bytes()
+            self.payload_len = (64000).to_bytes()
 
             # Create CS352 Struct
             self.sock352PktHdrData = '!BBBBHHLLQQLL'
@@ -116,7 +116,7 @@ class socket:
         self.window = b'\x00'
 
         # Each payload will be 65k bytes maximum
-        self.payload_len = (65000).to_bytes()
+        self.payload_len = (64000).to_bytes()
 
         self.cs352struct = namedtuple('CS352 Struct', 'version flags opt_ptr protocol header_len checksum source_port dest_port sequence_no ack_no window payload_len')
 
@@ -132,7 +132,7 @@ class socket:
         return
 
     # TODO: fix this
-    def __pack_struct__(self, flags_pick, cs352tup,payload_length=65000):
+    def __pack_struct__(self, cs352tup, payload_length=64000):
         return struct.pack(cs352tup.version, binascii.a2b_hex(cs352tup.flags), cs352tup.opt_ptr, cs352tup.protocol
                               , cs352tup.header_len, cs352tup.checksum, binascii.a2b_hex(cs352tup.source_port),
                               binascii.a2b_hex(cs352tup.dest_port), cs352tup.sequence_no, cs352tup.ack_no, cs352tup.payload_len)
@@ -279,54 +279,70 @@ class socket:
     # resend the data. While acks are beings sent, we mark for which
     # packets, the acks are received.
     # TODO: convert from ascii to binary and back
+    # TODO: Synchronize the SEQ, SYN and ACK values
     def send(self,buffer):
-        # get the length of the buffer and split it according to the
-        # the size of the packets (65k bytes + header). The value of N
-        # should be the size of the buffer divided by 65 k. Maybe this will change.
-        lenbuff = len(buffer)
-        N_PACKETS_LIMIT = lenbuff/65000
-
-        # A "pointer" which holds which part of the buffer
-        # we are sending currently.
-        ptr = 0
 
         # function to receive acknowledgments
         # The function receives the buffer and N, as arguments.
+        # Return 1 means all acknowledgements received.
+        # Return -1 means none received.
         def recvacks(buffer, n_packets):
             num_acks = 0
             start_time = time.time()
             while num_acks < n_packets and (time.time() - start_time) < 100:
                 ack = self.sock.recv()
+                num_acks += 1
+
+            if num_acks < n_packets || time.time() - start_time >= 100:
+                return -1
+
+            return 1
 
 
-            return
+        # get the length of the buffer and split it according to the
+        # the size of the packets (65k bytes + header). The value of N
+        # should be the size of the buffer divided by 65 k. Maybe this will change.
+        lenbuff = len(buffer)
+
+        # the buffer in bytes
+        bin_buff = binascii.a2b_hex(buffer)
+
+        N_PACKETS_LIMIT = lenbuff/64000
+
+        # A "pointer" which holds which part of the buffer
+        # we are sending currently.
+        ptr = 0
 
         # Variable to count the number of bytes sent.
         bytessent = 0     # fill in your code here
 
 
         while not bytessent == lenbuff:
-            packet = struct.pack(fmt='i',)
-            if packet + 65000 < lenbuff:
-                packet += "\n" + buffer[ptr:(ptr+65000)]
+            header = self.cs352struct()
+
+            # send a 64k bytes payload if we can
+            if self.header_len + 64000 < lenbuff:
+                header = self.__pack_struct__(header)
+                packet = header + buffer[ptr:(ptr + 64000)]
             else:
-                packet += "\n" + buffer[ptr:lenbuff-1]
+                # otherwise send the remaining
+                header.payload_len = (lenbuff - ptr - 1).to_bytes()
+                header = self.__pack_struct__(header)
+                packet = header + buffer[ptr:lenbuff-1]
 
-            self.sock.send()
+            self.sock.send(packet)
 
-            if ptr > lenbuff - 65000:
-                pass
+            if ptr > lenbuff - 64000:
+                break
             else:
-                ptr += 65000
+                ptr += 64000
 
-        thread_recv = Thread(target=recvacks, args=(buffer, N_PACKETS_LIMIT))
-        thread_recv.start()
-            # when we send we want to get an acknowledgement back
 
-        start_time = time.time()
-        thread_recv.join(timeout=100)
-        if time.time() - start_time >= 100:
+        # when we send we want to get an acknowledgement back for all N packets
+        did_recv_all = recvacks(buffer, N_PACKETS_LIMIT)
+        if did_recv_all == -1:
             return self.send(buffer)
+
 
         return bytessent
 
@@ -334,7 +350,8 @@ class socket:
     # That part should be easy.
     # But, the harder part is to rearrange all of the packets in the order they should
     # be in. A solution I was thinking of is to sort by SYN values.
-    # TODO: convert from ascii to binary and back
+    # TODO: Synchronize the SEQ, SYN and ACK values
+    # TODO: Implement a way to check if we are receiving FIN
     def recv(self,nbytes):
         # Store the bytes into this buffer
         bytesreceived = 0     # fill in your code here
@@ -347,24 +364,36 @@ class socket:
         # we want to obtain
         start_time = time.time()
 
-        # Keep obtaining packets until we
-        while (not sys.getsizeof(bytesreceived) == nbytes) and time.time()-start_time < 100:
-            #recieve data from the server
+        # Keep obtaining packets until we have recieved n bytes
+        while sys.getsizeof(bytesreceived) < nbytes and time.time()-start_time < 1:
+            # receive data from the server
             data_recv = self.sock.recv(nbytes)
 
+            # Split up packet into header and data
+            header = self.__unpack_struct__(data_recv[:self.header_len])
+            data = data_recv[self.header_len:]
+            packet_list.append((header, data))
+
             # iterate the amount of bytes we received
-            bytesreceived += + sys.getsizeof(data_recv)
-            packet_list.append(data_recv)
+            bytesreceived += sys.getsizeof(data)
 
-            # send acknowledgement
-            self.sock.send()
+            # send acknowledgement, which should be SYN + sizeof(Data) ????
+            new_header = header
+            new_header.ack_no = new_header.flags + sys.getsizeof(data)
+            new_header.payload_len = 0
 
-        return self.reorder()
-        # return bytesreceived
+            self.sock.send(self.__pack_struct__(new_header))
 
-    # TODO: Sort by received ACK number
+        packet_list = self.reorder(packet_list)
+        # Get the bytes only and make it into a list
+        bytes_list = [x[1] for x in packet_list]
+        # Join all of the bytes together and return
+        bytesreceived = bytes_list.join()
+        return bytesreceived
+
     def reorder(self, packet_list):
-        packet_list.sort()
+        # Sort the list by the ack_num
+        return packet_list.sort(key=lambda x: x[0].ack_no)
     
 
 
