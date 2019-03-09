@@ -6,7 +6,7 @@ from threading import Thread
 import time
 import random
 from collections import namedtuple
-
+# TODO : FIX FLAGS AND HOW WE SEND THEM
 
 SOCK352_SYN = b'0x01'
 SOCK352_FIN = b'0x02'
@@ -78,7 +78,7 @@ class socket:
             self.sock352PktHdrData = '!BBBBHHLLQQLL'
             self.cs352struct = struct.Struct(self.sock352PktHdrData)
     '''
-
+    # TODO: FIX HOW WE PUT FLAGS INTO THE STRUCT AND PACK THEM ADN RETRIEVE THEM
     # should use the struct to initialize an object
     def __init__(self):  # fill in your code here
         # Version 1 of RDP.
@@ -286,6 +286,7 @@ class socket:
         # The function receives the buffer and N, as arguments.
         # Return 1 means all acknowledgements received.
         # Return -1 means none received.
+        # TODO: Verify that the acks are actually unique and what we should obtain rather then counting the number of received messages as acks
         def recvacks(buffer, n_packets):
             num_acks = 0
             start_time = time.time()
@@ -293,7 +294,7 @@ class socket:
                 ack = self.sock.recv()
                 num_acks += 1
 
-            if num_acks < n_packets || time.time() - start_time >= 100:
+            if num_acks < n_packets or time.time() - start_time >= 100:
                 return -1
 
             return 1
@@ -318,7 +319,12 @@ class socket:
 
 
         while not bytessent == lenbuff:
-            header = self.cs352struct()
+            header = self.cs352struct(version=self.version,flags=SOCK352_SYN,opt_ptr=self.opt_ptr,
+                                      protocol=self.protocol,header_len=self.header_len,
+                                      checksum=self.checksum,
+                                      source_port=self.source_port,dest_port=self.dest_port,
+                                      sequence_no=self.sequence_no,ack_no=self.ack_no,
+                                      window=self.window,payload_len=0)
 
             # send a 64k bytes payload if we can
             if self.header_len + 64000 < lenbuff:
