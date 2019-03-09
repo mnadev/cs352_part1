@@ -7,8 +7,7 @@ import time
 import random
 from collections import namedtuple
 
-# TODO: fix to_bytes() methods because it's not supported in Python 2.7  int('f483'.encode('hex'), 16)
-# TODO : FIX FLAGS AND HOW WE SEND THEM
+# constants defined here
 SOCK352_SYN = b'\x01'
 SOCK352_FIN = b'\x02'
 SOCK352_ACK = b'\x04'
@@ -16,7 +15,7 @@ SOCK352_RESET = b'\x08'
 SOCK352_HAS_OPT = b'\xA0'
 
 # Defining N for Go Back N, randomly assigned right now
-N_PACKETS_LIMIT = 5
+N_PACKETS_LIMIT = 10
 
 # creating the port variables for receiving and sending processes
 global tx_port
@@ -40,46 +39,6 @@ def init(UDPportTx,UDPportRx):   # initialize your UDP socket here
 
 
 class socket:
-    '''
-    class cs352struct:
-        def __init__(self):
-            # Version 1 of RDP.
-            self.version = b'x\01'
-
-            # Set flags to what they are given as in the prompt
-            self.flags = dict(
-                [("SYN", b'\x01'), ("FIN", b'\x02'), ("ACK", b'\x04'), ("RESET", b"\x08"), ("HAS_OPT", b"\xA0")])
-
-            # Ignore these two for now. just setting them to zero
-            self.opt_ptr = b"\x00"
-            self.protocol = b"\x00"
-
-            # The length of the header in bytes
-            self.header_len = b'\x00'
-
-            # Set checksum to 0 for now.
-            self.checksum = b'\x00'
-
-            # Set receiving port and destination port.
-            self.source_port = tx_port
-            self.dest_port = rx_port
-
-            # Set sequence number to a random number
-            self.sequence_no = random.randrange(1, 10).to_bytes()
-            # Set ack_num to SYN?????
-            self.ack_no = self.flags["SYN"]
-
-            # Ignore window for now
-            self.window = b'\x00'
-
-            # Each payload will be 65k bytes maximum
-            self.payload_len = (64000).to_bytes()
-
-            # Create CS352 Struct
-            self.sock352PktHdrData = '!BBBBHHLLQQLL'
-            self.cs352struct = struct.Struct(self.sock352PktHdrData)
-    '''
-    # TODO: FIX HOW WE PUT FLAGS INTO THE STRUCT AND PACK THEM ADN RETRIEVE THEM
     # should use the struct to initialize an object
     def __init__(self):  # fill in your code here
         # Version 1 of RDP.
@@ -95,33 +54,37 @@ class socket:
         self.header_struct = struct.Struct(self.sock352PktHdrData)
 
         # By my calculations, header should be 36 bytes
+        # Anyways, we store both the int version and the bytes version here.
+        # It's annoying to convert back and forth.
         self.header_len_int = struct.calcsize(self.sock352PktHdrData)
         self.header_len = str(self.header_len_int).strip().decode("hex")
 
         # Set checksum to 0 for now.
-        self.checksum = b'\x00'
+        self.checksum = b'\x00\x00'
 
         # Set receiving port and destination port.
+        # Converted to bytes
         self.source_port = tx_port
         self.dest_port = rx_port
 
         # Set sequence number to a random number
-        self.sequence_no = b'\xAD'
+        self.sequence_no = b'\x00\x00\x00\x00\x00\x00\x00\xAD'
 
         # Set ack_num to SYN?????
-        self.ack_no = b'\x01'
+        self.ack_no = b'\x00\x00\x00\x00\x00\x00\x00\x01'
 
         # Ignore window for now
-        self.window = b'\x00'
+        self.window = b'\x00\x00\x00\x00'
 
         # Each payload will be 64k bytes maximum
-        # 64k in bytes is
+        # 64k in bytes is what is listed below
         self.payload_len_int = 64000
-        self.payload_len = b'\xFA\x00'
+        self.payload_len = b'\x00\x00\xFA\x00'
 
         self.cs352struct = namedtuple('cs352_struct', 'version flags opt_ptr protocol header_len checksum source_port dest_port sequence_no ack_no window payload_len')
 
         # Store address to send to
+        # should be tuple of (ip_addr, port)
         self.address = None
 
         # Booleans to state whether we are connected and listening
@@ -348,7 +311,7 @@ class socket:
         # the buffer in bytes
         bin_buff = binascii.a2b_hex(buffer)
 
-        N_PACKETS_LIMIT = lenbuff/64000
+        N_PACKETS_LIMIT = 10
 
         # A "pointer" which holds which part of the buffer
         # we are sending currently.
@@ -359,35 +322,38 @@ class socket:
 
 
         while not bytessent == lenbuff:
-            header = self.cs352struct(version=self.version,flags=SOCK352_SYN,opt_ptr=self.opt_ptr,
-                                      protocol=self.protocol,header_len=self.header_len,
-                                      checksum=self.checksum,
-                                      source_port=self.source_port,dest_port=self.dest_port,
-                                      sequence_no=self.sequence_no,ack_no=self.ack_no,
-                                      window=self.window,payload_len=0)
+            packets_sent = 0
+            while not packets_sent == N_PACKETS_LIMIT:
+                header = self.cs352struct(version=self.version,flags=SOCK352_SYN,opt_ptr=self.opt_ptr,
+                                          protocol=self.protocol,header_len=self.header_len,
+                                          checksum=self.checksum,
+                                          source_port=self.source_port,dest_port=self.dest_port,
+                                          sequence_no=self.sequence_no,ack_no=self.ack_no,
+                                          window=self.window,payload_len=0)
 
-            # send a 64k bytes payload if we can
-            if self.header_len + 64000 < lenbuff:
-                header = self.__pack_struct__(header)
-                packet = header + buffer[ptr:(ptr + 64000)]
-            else:
-                # otherwise send the remaining
-                header.payload_len = (str(int(lenbuff - ptr - 1)).encode('hex'), 16)
-                header = self.__pack_struct__(header)
-                packet = header + buffer[ptr:lenbuff-1]
+                # send a 64k bytes payload if we can
+                if self.header_len + 64000 < lenbuff:
+                    header = self.__pack_struct__(header)
+                    packet = header + buffer[ptr:(ptr + 64000)]
+                else:
+                    # otherwise send the remaining
+                    header.payload_len = (str(int(lenbuff - ptr - 1)).encode('hex'), 16)
+                    header = self.__pack_struct__(header)
+                    packet = header + buffer[ptr:lenbuff-1]
 
-            self.sock.send(packet)
+                self.sock.sendto(packet, address=(self.dest_address, self.dest_port))
+                packets_sent += 1
 
-            if ptr > lenbuff - 64000:
-                break
-            else:
-                ptr += 64000
+                if ptr > lenbuff - 64000:
+                    break
+                else:
+                    ptr += 64000
 
 
-        # when we send we want to get an acknowledgement back for all N packets
-        did_recv_all = recvacks(buffer, N_PACKETS_LIMIT)
-        if did_recv_all == -1:
-            return self.send(buffer)
+            # when we send we want to get an acknowledgement back for all N packets
+            did_recv_all = recvacks(buffer, N_PACKETS_LIMIT)
+            if did_recv_all == -1:
+                return self.send(buffer)
 
 
         return bytessent
