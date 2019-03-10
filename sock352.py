@@ -2,7 +2,7 @@ import binascii
 import socket as syssock
 import struct
 import sys
-
+# Mohammad Nadeem and Gregory Mellilo
 # constants defined here
 SOCK352_SYN = 0x01
 SOCK352_FIN = 0x02
@@ -76,49 +76,48 @@ class socket:
         # It could be less and we should account for that
         self.payload_len = 64000
 
-        # Store address to send to
-        # should be tuple of (ip_addr, port)
-        self.address = (None, tx_port)
-
         # Booleans to state whether we are connected and listening
         self.isConnected = False
         self.isListening = False
 
         # Create a socket using UDP and using IP
         self.sock = syssock.socket(syssock.AF_INET, syssock.SOCK_DGRAM)
-        return
+	print "binding"
+	self.sock.bind(('0.0.0.0',rx_port))
+	return
 
     # Bind to a port (from server perspective)
     # Which probably means to set the variable equal to
     # the port.
     def bind(self,address):
-        (addr, self.unusedport) = address
-        self.sock.bind((addr, int(rx_port)))
-
+        print "doing nothing"
         return
 
     # This function is to create a connection from client perspective
     def connect(self,address):  # fill in your code here
-        (self.dest_address, self.unusedport) = address
+        print "conencting"
+	print "ports r: %d t:%d"%(rx_port,tx_port)
+	
+	(self.ip_address, self.unusedport) = address
         self.sock.settimeout(None)
-
-        self.sock.bind((self.dest_address, int(rx_port)))
+	print "ip: %s"%self.ip_address
 
         # 3-way handshake from perspective of client
         payload = (0)
-
-        # Send SYN first
+	
+	print "sending SYN"
+       	# Send SYN first
         first_syn_conn = self.header_struct.pack(self.version,SOCK352_SYN,self.opt_ptr,
                                       self.protocol,self.header_len,self.checksum,
                                       self.source_port,self.dest_port,
                                       self.sequence_no,self.ack_no,self.window,0)
 
-        self.sock.sendto(first_syn_conn,(self.dest_address, tx_port))
+        self.sock.sendto(first_syn_conn,(self.ip_address, tx_port))
 
         # Receive ACK which should be ACK
         # Also receive SEQ
         # Convert the obtained bytes to ascii
-
+	print "receive ACK"
         result_bin, self.dest_address = self.sock.recvfrom(self.header_len)
 
 
@@ -131,14 +130,16 @@ class socket:
             print "Unable to connect"
             return -1
 
-        # Send SYN again
-        second_syn_conn = self.header_struct.pack(self.version, SOCK352_SYN, self.opt_ptr,
+	print "sending ACK"
+
+        # Send ACK
+        second_syn_conn = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
                                       self.protocol, self.header_len,self.checksum,
                                       self.source_port, self.dest_port,self.sequence_no,
                                       self.ack_no,self.window,int(payload))
 
 
-        self.sock.sendto(second_syn_conn, (self.dest_address, tx_port))
+        self.sock.sendto(second_syn_conn, self.dest_address)
 
 
         self.isConnected = True
@@ -153,13 +154,16 @@ class socket:
     # This function is to create a connection from the server perspective.
     # Here we must implement a 3 way handshake.
     def accept(self):
-
+	print "accepting"
         self.sock.settimeout(None)
-        # self.sock.bind((self.dest_address, int(rx_port)))
-
+	# self.sock.setsockopt(syssock.SOL_SOCKET, syssock.SO_REUSEADDR, 1)        
+	# self.sock.bind(('', int(rx_port)))
+	print "ports: r:%d t:%d"%(rx_port, tx_port)	
+	print "waiting for SYN"
         # first wait for an incoming input from client
         # which sends the SYN number.
-        first_pack, self.dest_address = self.sock.recvfrom(self.header_len)
+        
+	first_pack, self.dest_address = self.sock.recvfrom(self.header_len)
 
         # Convert to ASCII
         first_pack_struct = self.header_struct.unpack(first_pack)
@@ -167,15 +171,16 @@ class socket:
         if not first_pack_struct[1] == SOCK352_SYN:
             print "Failed to connect"
             return -1
-
+	
+	print "sending ACK"
         # The returned buffer have flag equal to ACK to acknowledge
         first_ack = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
                                       self.protocol, self.header_len,self.checksum,
                                       self.source_port, self.dest_port,self.sequence_no,
                                       self.ack_no,self.window)
 
-        self.sock.sendto(first_ack, (self.dest_address, tx_port))
-
+        self.sock.sendto(first_ack, self.dest_address)
+	print "recieving last ACK"
         # Receive the last acknowledgement
         # Convert to ascii
         last_ack_bin, self.dest_address = self.sock.recvfrom(self.header_len)
@@ -187,9 +192,9 @@ class socket:
         if not result_struct[1] == SOCK352_ACK:
             print "Failed to connect"
             return -1
-
+	
         # Have no idea what to return
-        (clientsocket, address) = (self.sock, (self.dest_address,tx_port))  # change this to your code
+        (clientsocket, address) = (self.sock, self.dest_address)  # change this to your code
         self.isConnected = True
 
         return (clientsocket, address)
@@ -209,7 +214,7 @@ class socket:
                                       self.source_port,self.dest_port,self.sequence_no,
                                       self.ack_no,self.window,0)
         try:
-            self.sock.sendto(first_fin, (self.dest_address,tx_port))
+            self.sock.sendto(first_fin, self.dest_address)
         except syssock.timeout:
             print "Failed to send FIN"
             return -1
@@ -267,7 +272,7 @@ class socket:
                                       self.window,0)
 
         try:
-            self.sock.sendto(final_ack, (self.dest_address, self.dest_port))
+            self.sock.sendto(final_ack, self.dest_address)
         except syssock.timeout:
             print "Failed to send Final ACK"
             return -1
@@ -380,9 +385,9 @@ class socket:
                     bytessent += (lenbuff - ptr - 1)
 
                 try:
-                    self.sock.sendto(packet, address=(self.dest_address, self.dest_port))
+                    self.sock.sendto(packet, self.dest_address)
                 except syssock.timeout:
-                    self.send(buffer)
+                    continue
 
                 packets_sent += 1
 
@@ -415,7 +420,7 @@ class socket:
                                             self.window, 0)
 
         try:
-            self.sock.sendto(final_ack, (self.dest_address, self.dest_port))
+            self.sock.sendto(final_ack, self.dest_address)
         except syssock.timeout:
             print "Final ACK could not be sent"
             return -1
@@ -427,7 +432,7 @@ class socket:
                                             self.window, 0)
 
         try:
-            self.sock.sendto(final_fin, (self.dest_address, self.dest_port))
+            self.sock.sendto(final_fin, self.dest_address)
         except syssock.timeout:
             print "Final FIN could not be sent"
             return -1
@@ -494,13 +499,13 @@ class socket:
                                             self.window, 0)
 
             try:
-                self.sock.sendto(new_header, (self.dest_address, tx_port))
+                self.sock.sendto(new_header, self.dest_address)
             except syssock.timeout:
                 new_header = self.header_struct.pack(self.version, SOCK352_RESET, self.opt_ptr,
                                                      self.protocol, self.header_len, self.checksum, self.source_port,
                                                      self.dest_port, self.sequence_no, ack_no,
                                                      self.window, 0)
-                self.sock.sendto(new_header, (self.dest_address, tx_port))
+                self.sock.sendto(new_header, self.dest_address)
                 self.recv(nbytes)
 
         packet_list = self.reorder(packet_list)
