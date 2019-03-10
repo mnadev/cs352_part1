@@ -7,11 +7,11 @@ import time
 # TODO: implement 0.2 second timeouts for all socket operations
 
 # constants defined here
-SOCK352_SYN = b'\x01'
-SOCK352_FIN = b'\x02'
-SOCK352_ACK = b'\x04'
-SOCK352_RESET = b'\x08'
-SOCK352_HAS_OPT = b'\xA0'
+SOCK352_SYN = 0x01
+SOCK352_FIN = 0x02
+SOCK352_ACK = 0x04
+SOCK352_RESET = 0x08
+SOCK352_HAS_OPT = 0xA0
 
 # Defining N for Go Back N, randomly assigned right now
 N_PACKETS_LIMIT = 10
@@ -54,7 +54,7 @@ class socket:
         self.header_struct = struct.Struct(self.sock352PktHdrData)
 
         # Calculating the header size
-        self.header_len = struct.calcsize(self.sock352PktHdrData)
+        self.header_len = int(struct.calcsize(self.sock352PktHdrData))
 
         # Set checksum to 0 for now.
         self.checksum = 0
@@ -68,10 +68,10 @@ class socket:
         self.sequence_no = 0
 
         # Set ack_num to 1 for now
-        self.ack_no = (0)
+        self.ack_no = 0
 
         # Ignore window for now
-        self.window = (0)
+        self.window = 0
 
         # Each payload will be 64k bytes maximum
         # 64k in bytes is what is listed below
@@ -108,14 +108,14 @@ class socket:
 
         # 3-way handshake from perspective of client
         payload = (0)
-
-        # Send SYN first
+        
+	# Send SYN first
         first_syn_conn = self.header_struct.pack(self.version,SOCK352_SYN,self.opt_ptr,
                                       self.protocol,self.header_len,self.checksum,
-                                      self.source_port,12,
-                                      12,12,12,12)
+                                      self.source_port,self.dest_port,
+                                      self.sequence_no,self.ack_no,self.window,0)
 
-        self.sock.sendto(first_syn_conn,(self.dest_address, tx_port))
+        self.sock.sendto(first_syn_conn,(self.dest_address, int(tx_port)))
 
         # Receive ACK which should be (SYN | ACK) & ACK
         # Also receive SEQ
@@ -136,7 +136,7 @@ class socket:
                                       self.protocol, self.header_len,self.checksum,
                                       self.source_port, self.dest_port,self.sequence_no,
                                       self.ack_no,self.window,int(payload))
-
+		
         self.sock.sendto(second_syn_conn, (self.dest_address, tx_port))
 
 
