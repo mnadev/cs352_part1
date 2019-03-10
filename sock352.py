@@ -2,10 +2,7 @@ import binascii
 import socket as syssock
 import struct
 import sys
-from threading import Thread
 import time
-import random
-from collections import namedtuple
 
 # TODO: implement 0.2 second timeouts for all socket operations
 
@@ -31,6 +28,7 @@ tx_port = 1111
 # define the UDP ports all messages are sent
 # and received from
 
+
 # basically only set the port numbers
 def init(UDPportTx,UDPportRx):   # initialize your UDP socket here
     global tx_port
@@ -44,50 +42,45 @@ class socket:
     # should use the struct to initialize an object
     def __init__(self):  # fill in your code here
         # Version 1 of RDP.
-        self.version = b'x\01'
+        self.version = 1
 
         # Ignore these two for now. just setting them to zero
-        self.opt_ptr = b"\x00"
-        self.protocol = b"\x00"
+        self.opt_ptr = 0
+        self.protocol = 0
 
         # The length of the header in bytes
         self.sock352PktHdrData = '!BBBBHHLLQQLL'
 
         self.header_struct = struct.Struct(self.sock352PktHdrData)
 
-        # By my calculations, header should be 36 bytes
-        # Anyways, we store both the int version and the bytes version here.
-        # It's annoying to convert back and forth.
-        self.header_len_int = struct.calcsize(self.sock352PktHdrData)
-        self.header_len = str(self.header_len_int).strip().decode("hex")
+        # Calculating the header size
+        self.header_len = struct.calcsize(self.sock352PktHdrData)
 
         # Set checksum to 0 for now.
-        self.checksum = b'\x00\x00'
+        self.checksum = 0
 
         # Set ports which are unused for this part
         # so they'll be set to random value
-        self.source_port = b'\x00\x00\x00\x00'
-        self.dest_port = b'\x00\x00\x00\x00'
+        self.source_port = 0
+        self.dest_port = 0
 
         # Set sequence number to a random number
-        self.sequence_no = b'\x00\x00\x00\x00\x00\x00\x00\xAD'
+        self.sequence_no = 0
 
         # Set ack_num to 1 for now
-        self.ack_no = b'\x00\x00\x00\x00\x00\x00\x00\x01'
+        self.ack_no = (0)
 
         # Ignore window for now
-        self.window = b'\x00\x00\x00\x00'
+        self.window = (0)
 
         # Each payload will be 64k bytes maximum
         # 64k in bytes is what is listed below
-        self.payload_len_int = 64000
-        self.payload_len = b'\x00\x00\xFA\x00'
-
-        #self.cs352struct = namedtuple('cs352_struct', 'version flags opt_ptr protocol header_len checksum source_port dest_port sequence_no ack_no window payload_len')
+        # It could be less and we should account for that
+        self.payload_len = 64000
 
         # Store address to send to
         # should be tuple of (ip_addr, port)
-        self.address = None
+        self.address = (None, tx_port)
 
         # Booleans to state whether we are connected and listening
         self.isConnected = False
@@ -97,45 +90,37 @@ class socket:
         self.sock = syssock.socket(syssock.AF_INET, syssock.SOCK_DGRAM)
         return
 
-    # TODO: fix this
-    #def __pack_struct__(self, cs352tup, payload_length=64000):
-    #    return struct.pack(cs352tup.version, cs352tup.flags, cs352tup.opt_ptr, cs352tup.protocol
-    #                          , cs352tup.header_len, cs352tup.checksum, binascii.a2b_hex(cs352tup.source_port),
-    #                          binascii.a2b_hex(cs352tup.dest_port), cs352tup.sequence_no, cs352tup.ack_no, cs352tup.payload_len)
-
-    # Unpack the bytes into this struct
-    #def __unpack_struct__(self, buffer):
-    #    return self.cs352struct._make(struct.unpack(self.sock352PktHdrData, buffer))
-
     # Bind to a port (from server perspective)
-    # Which probably means to set the variables equal to
+    # Which probably means to set the variable equal to
     # the port.
     def bind(self,address):
         (null_val, self.unusedport) = address
-        self.sock.bind((null_val, rx_port))
+
+        # Bind to the port
+        self.sock.bind(('', rx_port))
         return
 
     # This function is to create a connection from client perspective
     def connect(self,address):  # fill in your code here
         (self.dest_address, self.unusedport) = address
 
-        self.sock.bind((self.dest_address, rx_port))
+        self.sock.bind(('', int(rx_port)))
 
         # 3-way handshake from perspective of client
+        payload = (0)
 
         # Send SYN first
         first_syn_conn = self.header_struct.pack(self.version,SOCK352_SYN,self.opt_ptr,
                                       self.protocol,self.header_len,self.checksum,
-                                      self.source_port,self.dest_port,
-                                      self.sequence_no,self.ack_no,
-                                      self.window,0)
+                                      self.source_port,12,
+                                      12,12,12,12)
 
         self.sock.sendto(first_syn_conn,(self.dest_address, tx_port))
 
         # Receive ACK which should be (SYN | ACK) & ACK
         # Also receive SEQ
         # Convert the obtained bytes to ascii
-        result_bin, self.dest_address = self.sock.recvfrom(self.header_len_int)
+        result_bin, self.dest_address = self.sock.recvfrom(self.header_len)
 
         # Convert the bytes to struct
         result_struct = self.header_struct.unpack(result_bin)
@@ -150,14 +135,18 @@ class socket:
         second_syn_conn = self.header_struct.pack(self.version, SOCK352_SYN, self.opt_ptr,
                                       self.protocol, self.header_len,self.checksum,
                                       self.source_port, self.dest_port,self.sequence_no,
-                                      self.ack_no,self.window,0)
+                                      self.ack_no,self.window,int(payload))
 
         self.sock.sendto(second_syn_conn, (self.dest_address, tx_port))
+
+
+        self.isConnected = True
         return 
 
     # ignore this function
     # or use is to create a list of sockets.
     def listen(self,backlog):
+        self.isListening = True
         return
 
     # This function is to create a connection from the server perspective.
@@ -165,7 +154,7 @@ class socket:
     def accept(self):
         # first wait for an incoming input from client
         # which sends the SYN number.
-        first_pack, self.dest_address = self.sock.recvfrom(self.header_len_int)
+        first_pack, self.dest_address = self.sock.recvfrom(self.header_len)
 
         # Convert to ASCII
         first_pack_struct = self.header_struct.unpack(first_pack)
@@ -178,13 +167,13 @@ class socket:
         first_ack = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
                                       self.protocol, self.header_len,self.checksum,
                                       self.source_port, self.dest_port,self.sequence_no,
-                                      self.ack_no,self.window, 0)
+                                      self.ack_no,self.window)
 
         self.sock.sendto(first_ack, (self.dest_address, tx_port))
 
         # Receive the last acknowledgement
         # Convert to ascii
-        last_ack_bin = self.sock.recv(self.header_len_int)
+        last_ack_bin = self.sock.recv(self.header_len)
 
         # Convert the bytes to struct
         result_struct = self.header_struct.unpack(last_ack_bin)
@@ -196,6 +185,8 @@ class socket:
 
         # Have no idea what to return
         (clientsocket, address) = (self.sock, (self.dest_address,tx_port))  # change this to your code
+        self.isConnected = True
+
         return (clientsocket, address)
 
     # Close connection if last packet received
@@ -217,7 +208,7 @@ class socket:
         # Receive ACK and FIN.
         # first wait for an incoming input from client
         # which sends the ACK or FIN number.
-        first_pack, address = self.sock.recvfrom(self.header_len_int)
+        first_pack, address = self.sock.recvfrom(self.header_len)
 
         # Convert to ASCII
         first_pack_struct = self.header_struct.unpack(first_pack)
@@ -234,7 +225,7 @@ class socket:
         else:
             recievedFIN = True
 
-        second_pack, address = self.sock.recvfrom(self.header_len_int)
+        second_pack, address = self.sock.recvfrom(self.header_len)
 
         # Convert to ASCII
         second_pack_struct = self.header_struct.unpack(second_pack)
@@ -259,6 +250,9 @@ class socket:
                                       self.window,0)
 
         self.sock.sendto(final_ack, (self.dest_address, self.dest_port))
+
+        self.isConnected = False
+        self.isListening = False
         return 
 
     # This function implements go back N.
@@ -396,6 +390,9 @@ class socket:
         # WHAT DO WE DO WHEN DON'T RECEIVE ACK????
         if not last_ack_struct[1] == SOCK352_ACK:
             return -1
+
+        self.isConnected = False
+        self.isListening = False
 
     # For this function, we just receive data and send an acknowledgement.
     # That part should be easy.
