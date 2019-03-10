@@ -2,9 +2,6 @@ import binascii
 import socket as syssock
 import struct
 import sys
-import time
-
-# TODO: implement 0.2 second timeouts for all socket operations
 
 # constants defined here
 SOCK352_SYN = 0x01
@@ -34,6 +31,7 @@ def init(UDPportTx,UDPportRx):   # initialize your UDP socket here
     global tx_port
     global rx_port
 
+    # convert to int
     rx_port = int(UDPportRx)
     tx_port = int(UDPportTx)
 
@@ -88,25 +86,23 @@ class socket:
 
         # Create a socket using UDP and using IP
         self.sock = syssock.socket(syssock.AF_INET, syssock.SOCK_DGRAM)
-
-        self.sock.settimeout(0.2)
         return
 
     # Bind to a port (from server perspective)
     # Which probably means to set the variable equal to
     # the port.
     def bind(self,address):
-        (null_val, self.unusedport) = address
+        (addr, self.unusedport) = address
+        self.sock.bind((addr, int(rx_port)))
 
-        # Bind to the port
-        self.sock.bind(('', rx_port))
         return
 
     # This function is to create a connection from client perspective
     def connect(self,address):  # fill in your code here
         (self.dest_address, self.unusedport) = address
+        self.sock.settimeout(None)
 
-        self.sock.bind(('', int(rx_port)))
+        self.sock.bind((self.dest_address, int(rx_port)))
 
         # 3-way handshake from perspective of client
         payload = (0)
@@ -116,20 +112,15 @@ class socket:
                                       self.protocol,self.header_len,self.checksum,
                                       self.source_port,self.dest_port,
                                       self.sequence_no,self.ack_no,self.window,0)
-        try:
-            self.sock.sendto(first_syn_conn,(self.dest_address, int(tx_port)))
-        except syssock.timeout:
-            print "Connection could not be establish"
-            return -1
 
-        # Receive ACK which should be (SYN | ACK) & ACK
+        self.sock.sendto(first_syn_conn,(self.dest_address, tx_port))
+
+        # Receive ACK which should be ACK
         # Also receive SEQ
         # Convert the obtained bytes to ascii
-        try:
-            result_bin, self.dest_address = self.sock.recvfrom(self.header_len)
-        except:
-            print "Ack Not Recieved. Connection could not be established"
-            return -1
+
+        result_bin, self.dest_address = self.sock.recvfrom(self.header_len)
+
 
         # Convert the bytes to struct
         result_struct = self.header_struct.unpack(result_bin)
@@ -146,11 +137,9 @@ class socket:
                                       self.source_port, self.dest_port,self.sequence_no,
                                       self.ack_no,self.window,int(payload))
 
-        try:
-            self.sock.sendto(second_syn_conn, (self.dest_address, tx_port))
-        except syssock.timeout:
-            print "Connection could not be established"
-            return -1
+
+        self.sock.sendto(second_syn_conn, (self.dest_address, tx_port))
+
 
         self.isConnected = True
         return 
@@ -164,13 +153,13 @@ class socket:
     # This function is to create a connection from the server perspective.
     # Here we must implement a 3 way handshake.
     def accept(self):
+
+        self.sock.settimeout(None)
+        # self.sock.bind((self.dest_address, int(rx_port)))
+
         # first wait for an incoming input from client
         # which sends the SYN number.
-        try:
-            first_pack, self.dest_address = self.sock.recvfrom(self.header_len)
-        except syssock.timeout:
-            print "Connection could not be established"
-            return -1
+        first_pack, self.dest_address = self.sock.recvfrom(self.header_len)
 
         # Convert to ASCII
         first_pack_struct = self.header_struct.unpack(first_pack)
@@ -185,19 +174,12 @@ class socket:
                                       self.source_port, self.dest_port,self.sequence_no,
                                       self.ack_no,self.window)
 
-        try:
-            self.sock.sendto(first_ack, (self.dest_address, tx_port))
-        except syssock.timeout:
-            print "Connection could not be established"
-            return -1
+        self.sock.sendto(first_ack, (self.dest_address, tx_port))
 
         # Receive the last acknowledgement
         # Convert to ascii
-        try:
-            last_ack_bin, self.dest_address = self.sock.recvfrom(self.header_len)
-        except syssock.timeout:
-            print "Connection could not be established"
-            return -1
+        last_ack_bin, self.dest_address = self.sock.recvfrom(self.header_len)
+
         # Convert the bytes to struct
         result_struct = self.header_struct.unpack(last_ack_bin)
 
@@ -219,6 +201,7 @@ class socket:
         # then we should receive an ACK
         # Then, we should receive a FIN a
         # and we should send an ACK
+        self.sock.settimeout(None)
 
         # Send FIN.
         first_fin = self.header_struct.pack(self.version, SOCK352_FIN, self.opt_ptr,
@@ -291,7 +274,55 @@ class socket:
 
         self.isConnected = False
         self.isListening = False
-        return 
+        return
+
+
+    # function to receive acknowledgments
+    # The function receives the buffer and N, as arguments.
+    # Return 1 means all acknowledgements received.
+    # Return -1 means none received.
+    def recvacks(self, buffer, n_packets, starting_byte_pos, ending_byte_pos):
+        self.sock.settimeout(0.2)
+
+        ack_list = []
+        num_bytes = ending_byte_pos - starting_byte_pos
+        counter = starting_byte_pos
+        num_acks = 0
+        while num_acks < n_packets and counter < ending_byte_pos:
+            if counter + 64000 < ending_byte_pos:
+                try:
+                    ack_recv = self.sock.recv(self.header_len + 64000)
+                except syssock.timeout:
+                    self.send(buffer)
+                ack_pack = self.header_struct.unpack(ack_recv)
+
+                if ack_pack[1] == SOCK352_RESET:
+                    self.send(buffer)
+
+                ack_list.append(ack_pack[9])
+                num_acks += 1
+            else:
+                try:
+                    ack_recv = self.sock.recv(self.header_len + (ending_byte_pos - counter))
+                except syssock.timeout:
+                    self.send(buffer)
+                ack_pack = self.header_struct.unpack(ack_recv)
+
+                if ack_pack[1] == SOCK352_RESET:
+                    self.send(buffer)
+
+                ack_list.append(ack_pack[9])
+                num_acks += 1
+
+        if num_acks < n_packets:
+            return -1
+
+        # ack_list.sort()
+        # ack_list = [(x - starting_byte_pos) for x in ack_list]
+        # if not ack_list[ack_list.__len__() - 1] == num_bytes:
+        #   return -1
+
+        return 1
 
     # This function implements go back N.
     # We should use one thread to send the data and one thread to
@@ -301,53 +332,8 @@ class socket:
     # We should check if the receiving thread times out. If so,
     # resend the data. While acks are beings sent, we mark for which
     # packets, the acks are received.
-    # TODO: Synchronize the SEQ, SYN and ACK values
     def send(self,buffer):
-
-        # function to receive acknowledgments
-        # The function receives the buffer and N, as arguments.
-        # Return 1 means all acknowledgements received.
-        # Return -1 means none received.
-        def recvacks(buffer, n_packets, starting_byte_pos, ending_byte_pos):
-            ack_list = []
-            num_bytes = ending_byte_pos - starting_byte_pos
-            counter = starting_byte_pos
-            num_acks = 0
-            while num_acks < n_packets and counter < ending_byte_pos:
-                if counter + 64000 < ending_byte_pos:
-                    try:
-                        ack_recv = self.sock.recv(self.header_len + 64000)
-                    except syssock.timeout:
-                        self.send(buffer)
-                    ack_pack = self.header_struct.unpack(ack_recv)
-
-                    if ack_pack[1] == SOCK352_RESET:
-                        self.send(buffer)
-
-                    ack_list.append(ack_pack[9])
-                    num_acks += 1
-                else:
-                    try:
-                        ack_recv = self.sock.recv(self.header_len + (ending_byte_pos - counter))
-                    except syssock.timeout:
-                        self.send(buffer)
-                    ack_pack = self.header_struct.unpack(ack_recv)
-
-                    if ack_pack[1] == SOCK352_RESET:
-                        self.send(buffer)
-
-                    ack_list.append(ack_pack[9])
-                    num_acks += 1
-
-            if num_acks < n_packets:
-                return -1
-
-            ack_list.sort()
-            ack_list = [(x-starting_byte_pos) for x in ack_list]
-            if not ack_list[ack_list.__len__() - 1] == num_bytes:
-                return -1
-
-            return 1
+        self.sock.settimeout(None)
 
         # get the length of the buffer and split it according to the
         # the size of the packets (65k bytes + header). The value of N
@@ -409,7 +395,7 @@ class socket:
 
 
             # when we send we want to get an acknowledgement back for all N packets
-            did_recv_all = recvacks(buffer, N_PACKETS_LIMIT, ptr_go_back, bytessent)
+            did_recv_all = self.recvacks(buffer, N_PACKETS_LIMIT, ptr_go_back, bytessent)
 
             # Otherwise,resend N packets
             # To do this, we just set the ptr to the beginning ptr we had when we started sending N packets
@@ -420,6 +406,8 @@ class socket:
         return bytessent
 
     def closing_handler(self):
+        self.sock.settimeout(None)
+
         # SEND ACK first
         final_ack = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
                                             self.protocol, self.header_len, self.checksum, self.source_port,
@@ -466,9 +454,9 @@ class socket:
     # That part should be easy.
     # But, the harder part is to rearrange all of the packets in the order they should
     # be in. A solution I was thinking of is to sort by SYN values.
-    # TODO: Synchronize the SEQ, SYN and ACK values
-    # TODO: Implement a way to check if we are receiving FIN
     def recv(self,nbytes):
+        self.sock.settimeout(None)
+
         # Store the bytes into this buffer
         bytesreceived = 0     # fill in your code here
 
@@ -488,6 +476,10 @@ class socket:
             header = self.header_struct.unpack(data_recv[:self.header_len])
             data = data_recv[self.header_len:]
             packet_list.append((header, data))
+
+            # What to do if we receive a FIN
+            if header[1] == SOCK352_FIN:
+                return self.closing_handler()
 
             # iterate the amount of bytes we received
             bytesreceived += sys.getsizeof(data)
