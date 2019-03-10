@@ -7,6 +7,8 @@ import time
 import random
 from collections import namedtuple
 
+# TODO: implement 0.2 second timeouts for all socket operations
+
 # constants defined here
 SOCK352_SYN = b'\x01'
 SOCK352_FIN = b'\x02'
@@ -275,28 +277,37 @@ class socket:
         # Return 1 means all acknowledgements received.
         # Return -1 means none received.
         # TODO: Verify that the acks are actually unique and what we should obtain rather then counting the number of received messages as acks
-        def recvacks(buffer, n_packets, starting_byte, ending_byte):
+        def recvacks(buffer, n_packets, starting_byte_pos, ending_byte_pos):
+            ack_list = []
+            num_bytes = ending_byte_pos - starting_byte_pos
+            counter = starting_byte_pos
             num_acks = 0
-            start_time = time.time()
-            while num_acks < n_packets and (time.time() - start_time) < 100:
-                ack = self.sock.recv(self.header_len + 64000)
-                num_acks += 1
+            while num_acks < n_packets and counter < ending_byte_pos:
+                if counter + 64000 < ending_byte_pos:
+                    ack_recv = self.sock.recv(self.header_len + 64000)
+                    ack_pack = self.header_struct.unpack(ack_recv)
+                    ack_list.append(ack_pack[9])
+                    num_acks += 1
+                else:
+                    ack_recv = self.sock.recv(self.header_len + (ending_byte_pos-counter))
+                    ack_pack = self.header_struct.unpack(ack_recv)
+                    ack_list.append(ack_pack[9])
+                    num_acks += 1
 
-            if num_acks < n_packets or time.time() - start_time >= 100:
+            if num_acks < n_packets:
+                return -1
+
+            ack_list.sort()
+            ack_list = [(x-starting_byte_pos) for x in ack_list]
+            if not ack_list[ack_list.__len__() - 1] == num_bytes:
                 return -1
 
             return 1
-
 
         # get the length of the buffer and split it according to the
         # the size of the packets (65k bytes + header). The value of N
         # should be the size of the buffer divided by 65 k. Maybe this will change.
         lenbuff = len(buffer)
-
-        # the buffer in bytes
-        bin_buff = binascii.a2b_hex(buffer)
-
-        N_PACKETS_LIMIT = 10
 
         # A "pointer" which holds which part of the buffer
         # we are sending currently.
@@ -324,13 +335,16 @@ class socket:
 
                 # send a 64k bytes payload if we can
                 if self.header_len + 64000 < lenbuff:
-                    header = self.__pack_struct__(header)
-                    packet = header + buffer[ptr:(ptr + 64000)]
+                    packet = header + binascii.a2b_hex(buffer[ptr:(ptr + 64000)])
                     bytessent += 64000
                 else:
                     # otherwise send the remaining
-                    header.payload_len = (str(int(lenbuff - ptr - 1)).encode('hex'), 16)
-                    header = self.__pack_struct__(header)
+                    payload_len = int(lenbuff - ptr - 1)
+                    header = self.header_struct.pack(self.version, SOCK352_SYN, self.opt_ptr,
+                                                     self.protocol, self.header_len,self.checksum,
+                                                     self.source_port, self.dest_port,
+                                                     sequence_no, ack_no,
+                                                     self.window, payload_len)
                     packet = header + buffer[ptr:lenbuff-1]
                     bytessent += (lenbuff - ptr - 1)
 
@@ -347,14 +361,41 @@ class socket:
 
             # when we send we want to get an acknowledgement back for all N packets
             did_recv_all = recvacks(buffer, N_PACKETS_LIMIT, ptr_go_back, bytessent)
+
             # Otherwise,resend N packets
-            # TO do this, we just set the ptr to the beginning ptr we had when we started sending N packets
+            # To do this, we just set the ptr to the beginning ptr we had when we started sending N packets
             if did_recv_all == -1:
                 ptr = ptr_go_back
-
-
+                packets_sent -= N_PACKETS_LIMIT
 
         return bytessent
+
+    def closing_handler(self):
+        # SEND ACK first
+        final_ack = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
+                                            self.protocol, self.header_len, self.checksum, self.source_port,
+                                            self.dest_port, self.sequence_no, self.ack_no,
+                                            self.window, 0)
+
+        self.sock.sendto(final_ack, (self.dest_address, self.dest_port))
+
+        # SEND FIN SECOND
+        final_fin = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
+                                            self.protocol, self.header_len, self.checksum, self.source_port,
+                                            self.dest_port, self.sequence_no, self.ack_no,
+                                            self.window, 0)
+
+        self.sock.sendto(final_fin, (self.dest_address, self.dest_port))
+
+        # Receive last ACK
+        last_ack, address = self.sock.recvfrom(self.header_len_int)
+
+        # Convert to ASCII
+        last_ack_struct = self.header_struct.unpack(last_ack)
+
+        # WHAT DO WE DO WHEN DON'T RECEIVE ACK????
+        if not last_ack_struct[1] == SOCK352_ACK:
+            return -1
 
     # For this function, we just receive data and send an acknowledgement.
     # That part should be easy.
@@ -380,19 +421,23 @@ class socket:
             data_recv = self.sock.recv(nbytes)
 
             # Split up packet into header and data
-            header = self.__unpack_struct__(data_recv[:self.header_len])
+            header = self.header_struct.unpack(data_recv[:self.header_len])
             data = data_recv[self.header_len:]
             packet_list.append((header, data))
 
             # iterate the amount of bytes we received
             bytesreceived += sys.getsizeof(data)
 
-            # send acknowledgement, which should be SYN + sizeof(Data) ????
-            new_header = header
-            new_header.ack_no = new_header.flags + sys.getsizeof(data)
-            new_header.payload_len = 0
+            # ack_no should be sequence_no + sizeof(data)
+            ack_no = header[8] + sys.getsizeof(data)
 
-            self.sock.send(self.__pack_struct__(new_header))
+            # send acknowledgement, which should be SYN + sizeof(Data) ????
+            new_header = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
+                                            self.protocol, self.header_len, self.checksum, self.source_port,
+                                            self.dest_port, self.sequence_no, ack_no,
+                                            self.window, 0)
+
+            self.sock.sendto(new_header,(self.dest_address,tx_port))
 
         packet_list = self.reorder(packet_list)
 
@@ -405,4 +450,4 @@ class socket:
 
     def reorder(self, packet_list):
         # Sort the list by the sequence_no
-        return packet_list.sort(key=lambda x: x[0].sequence_no)
+        return packet_list.sort(key=lambda x: x[0][8])
