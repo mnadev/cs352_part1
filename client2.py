@@ -96,8 +96,9 @@ def main():
     # make sure we sent the whole fragment 
     while (totalsent < len(file_contents)):
         sent = s.send(file_contents)
-        if (sent == 0):
-            raise RuntimeError("socket broken")    
+        #if (sent == 0):
+        #    raise RuntimeError("socket broken")
+
     end_stamp = time.clock() 
     lapsed_seconds = end_stamp - start_stamp
     
