@@ -98,6 +98,7 @@ def main():
         sent = s.send(file_contents)
         if (sent == 0):
             raise RuntimeError("socket broken")
+        totalsent = totalsent + sent
 
     end_stamp = time.clock() 
     lapsed_seconds = end_stamp - start_stamp
