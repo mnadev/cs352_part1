@@ -325,7 +325,7 @@ class socket:
     # The function receives the buffer and N, as arguments.
     # Return 1 means all acknowledgements received.
     # Return -1 means none received.
-    def recvacks(self, buffer, n_packets,):
+    def recvacks(self, buffer, n_packets):
         # set timeout to recv acks
         print "Receiving Acks"
 
@@ -339,15 +339,18 @@ class socket:
             try:
                 ack_recv = self.sock.recvfrom(self.header_len + 64000)
             except syssock.timeout:
+                print "Resent Signal Sent"
                 self.resend = True
                 return
 
             num_acks += 1
 
         if time.time() - start_time > 0.2:
+            print "Resent Signal Sent"
             self.resend = True
 
         if num_acks < n_packets:
+            print "Resent Signal Sent"
             self.resend = True
 
         return 1
@@ -365,24 +368,10 @@ class socket:
 
         self.sock.settimeout(None)
 
-        '''
-        ptr = 0
-
-        while ptr < len(buffer):
-            if ptr + 64000:
-                self.sock.sendto(buffer[ptr:ptr+64000].encode("hex"),self.address)
-                ptr += 64000
-            else:
-                self.sock.sendto(buffer[ptr:len(buffer)].encode("hex"),self.address)
-                return
-        '''
-
         # get the length of the buffer and split it according to the
         # the size of the packets (65k bytes + header). The value of N
         # should be the size of the buffer divided by 65 k. Maybe this will change.
         lenbuff = len(buffer)
-
-        print "lenbuff: %d"%lenbuff
 
         # A "pointer" which holds which part of the buffer
         # we are sending currently.
@@ -396,11 +385,11 @@ class socket:
         ack_no = 1
         packets_sent = 0
 
-        while packets_sent < N_PACKETS_LIMIT:
+        while bytessent < lenbuff:
             prev_seq = sequence_no
             prev_ack = ack_no
 
-            recvacks_thread = Thread(target=self.recvacks,args=(self,buffer, N_PACKETS_LIMIT))
+            recvacks_thread = Thread(target=self.recvacks,args=(buffer, N_PACKETS_LIMIT))
 
             recvacks_thread.start()
 
@@ -412,45 +401,35 @@ class socket:
                                              self.window, self.payload_len)
 
             # send a 64k bytes payload if we can
-            if self.header_len + 64000 < lenbuff:
-                print "hi"
-                print "eh"
-                print "buffer %s"%buffer[ptr:(ptr + 64000)]
+            if ptr + 64000 < lenbuff:
                 packet = header + binascii.a2b_hex(buffer[ptr:(ptr + 64000)])
-                print "Sending packet %d" % sequence_no
 
                 self.sock.sendto(packet, self.address)
             else:
                 # otherwise send the remaining
                 payload_len = int(lenbuff - ptr)
-                print "hi2"
                 header = self.header_struct.pack(self.version, SOCK352_SYN, self.opt_ptr,
                                                  self.protocol, self.header_len,self.checksum,
                                                  self.source_port, self.dest_port,
                                                  sequence_no, ack_no,
                                                  self.window, payload_len)
-                print "len %s" % len(buffer[ptr:lenbuff])
                 packet = header + buffer[ptr:lenbuff].strip().encode("hex")
-                print "Sending packet %d" % sequence_no
 
-                self.sock.sendto(packet, self.address)
-                print "lotr"
-                print "len %s" % len(packet)
+                self.sock.sendto((header + buffer[ptr:lenbuff].strip().encode("hex")), self.address)
 
-            if self.header_len + 64000 < lenbuff:
-                bytessent += 64000
-            else:
-                bytessent += (lenbuff - ptr)
+            packets_sent = packets_sent + 1
 
-            packets_sent += 1
+            bytessent = bytessent + 64000
+
+            if bytessent > lenbuff:
+                break
 
             if ptr > lenbuff - 64000:
-                break
+                ptr = lenbuff
             else:
                 ptr += 64000
 
             sequence_no += bytessent
-            print "bytessent%d"%bytessent
 
             print "receiving acks"
             # when we send we want to get an acknowledgement back for all N packets
@@ -459,6 +438,7 @@ class socket:
             # Otherwise,resend N packets
             # To do this, we just set the ptr to the beginning ptr we had when we started sending N packets
             if self.resend:
+                print "Resending Now"
                 ptr = 0
                 packets_sent = 0
                 sequence_no = prev_seq
@@ -474,12 +454,14 @@ class socket:
     def recv(self,nbytes):
         self.sock.settimeout(None)
 
+        print "Receiving Data"
+
         # If nbytes is 4 we are receiving the size of the file.
         if nbytes == 4 and not self.didReceiveSizeFile:
-            data_recv, address = self.sock.recvfrom(nbytes)
+            data_recv, address = self.sock.recvfrom(nbytes + self.header_len)
 
             # Split up packet into header and data
-            header = self.header_struct.unpack(data_recv[0:self.header_len - 1])
+            header = self.header_struct.unpack(data_recv[0:self.header_len])
             data = data_recv[self.header_len:]
             # data = data_recv
 
@@ -505,10 +487,10 @@ class socket:
         while sys.getsizeof(bytesreceived) < nbytes:
             # receive data from the server
 
-            data_recv, address = self.sock.recvfrom(nbytes)
+            data_recv, address = self.sock.recvfrom(nbytes + self.header_len)
 
             # Split up packet into header and data
-            header = self.header_struct.unpack(data_recv[:self.header_len - 1])
+            header = self.header_struct.unpack(data_recv[0:self.header_len])
             data = data_recv[self.header_len:]
             packet_list.append((header, data))
 
