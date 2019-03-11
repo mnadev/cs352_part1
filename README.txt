@@ -25,15 +25,17 @@ For close, we implemented the four way termination handshake between the client 
 we receive, we check if the flag is equal to FIN. If so, there is a function called closing handler that is called
 which sends a FIN and an ACk and waits for the FINAL FIN.
 
-For send, we used a window of 10 packets. We keep sending packets until we sent all of the buffer. We wend 10 packets at
-a time and then wait for the acknowledgements. We created a seperate function to recieve the acknowledgements. It used
-to be an inner function inside send but we found that it was better not to make it an inner function. There was
+For send, we used a dynamic window with an upper limit of 20. We keep sending packets until we hit the window.
+Then, we wait for all the acks. We created a seperate function to receive the acknowledgements. It used
+to be an inner function inside send but we found that it was better not to make it an inner function because of
+multithreading. Rather, it was easier to have a boolean that stated whether packets had to be resent. There was
 no benefit from keeping it an inner function. For recvacks(), we have a timeout of 0.2 seconds. If we do not receive a
-packet in 0.2 seconds or we do not receive all N packets, then we resend the packets.
+packet in 0.2 seconds or we do not receive all N packets, then we resend the packets by changing the boolean.
 
 For recv(), we just keep receiving packets until we have received nbytes. The timeout for this function is set to
-None. For each packet, we send an acknowledgement packet back. For each packet we
+None. For each packet, we send an acknowledgement packet back. Then, we sort the packets by sequence number, obtain
+the bytes and concatenate them together. We return this in the end.
 
-We chose not to make our program multithreaded because we felt that it did not really offer a better solution. It is
-easier to send N packets sequentially and then wait for N acknowledgments. To run recvacks() in another thread, there
-was really no improvement over previous times.
+We chose to make our program multithreaded because we felt that it prevented us from losing any acknowledgements received.
+If we were sending data, it is possible we could receive acknowledgements before we send all the packets in our window
+we wanted to send.

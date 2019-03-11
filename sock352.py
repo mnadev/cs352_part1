@@ -106,12 +106,13 @@ class socket:
 
         # 3-way handshake from perspective of client
         payload = (0)
+        seq = random.randint(1,10000)
 
         # Send SYN first
         first_syn_conn = self.header_struct.pack(self.version,SOCK352_SYN,self.opt_ptr,
                                       self.protocol,self.header_len,self.checksum,
                                       self.source_port,self.dest_port,
-                                      self.sequence_no,self.ack_no,self.window,0)
+                                      seq,self.ack_no,self.window,0)
 
         self.sock.sendto(first_syn_conn,self.address)
 
@@ -122,6 +123,10 @@ class socket:
 
         # Convert the bytes to struct
         result_struct = self.header_struct.unpack(result_bin)
+
+        if not result_struct[9] == seq + 1:
+            print "Unable to connect"
+            return
 
         # If we get the wrong flag, we do ??????
         # possibly just return -1
@@ -150,6 +155,10 @@ class socket:
     # This function is to create a connection from the server perspective.
     # Here we must implement a 3 way handshake.
     def accept(self):
+        if self.isConnected:
+            print "Already Connected"
+            return
+
         self.sock.settimeout(None)
 
         # first wait for an incoming input from client
@@ -160,15 +169,18 @@ class socket:
         # Convert to ASCII
         first_pack_struct = self.header_struct.unpack(first_pack)
 
+        ack_no = first_pack_struct[8] + 1
+
         if not first_pack_struct[1] == SOCK352_SYN:
             print "Failed to connect"
             return -1
 
+        seq = random.randint(1, 10000)
         # The returned buffer have flag equal to ACK to acknowledge
         first_ack = self.header_struct.pack(self.version, SOCK352_ACK, self.opt_ptr,
                                       self.protocol, self.header_len,self.checksum,
-                                      self.source_port, self.dest_port,self.sequence_no,
-                                      self.ack_no,self.window,0)
+                                      self.source_port, self.dest_port,seq,
+                                      ack_no,self.window,0)
 
         self.sock.sendto(first_ack, self.address)
 
@@ -209,6 +221,8 @@ class socket:
         try:
             self.sock.sendto(first_fin, self.address)
         except syssock.timeout:
+            self.isConnected = False
+            self.isListening = False
             print "Connection terminated"
             return -1
 
@@ -219,6 +233,8 @@ class socket:
         try:
             first_pack, address = self.sock.recvfrom(self.header_len)
         except syssock.timeout:
+            self.isConnected = False
+            self.isListening = False
             print "Connection terminated"
             return -1
 
@@ -240,6 +256,8 @@ class socket:
         try:
             second_pack, address = self.sock.recvfrom(self.header_len)
         except syssock.timeout:
+            self.isConnected = False
+            self.isListening = False
             print "Connection terminated"
             return -1
 
@@ -268,6 +286,8 @@ class socket:
         try:
             self.sock.sendto(final_ack,self.address)
         except syssock.timeout:
+            self.isConnected = False
+            self.isListening = False
             print "Failed to send Final ACK"
             return -1
 
@@ -288,6 +308,8 @@ class socket:
         try:
             self.sock.sendto(final_ack, self.address)
         except syssock.timeout:
+            self.isConnected = False
+            self.isListening = False
             print "Connection terminated"
             return -1
 
@@ -301,6 +323,8 @@ class socket:
         try:
             self.sock.sendto(final_fin, self.address)
         except syssock.timeout:
+            self.isConnected = False
+            self.isListening = False
             print "Connection terminated"
             return -1
 
@@ -308,6 +332,8 @@ class socket:
         try:
             last_ack, address = self.sock.recvfrom(self.header_len)
         except syssock.timeout:
+            self.isConnected = False
+            self.isListening = False
             print "Connection terminated"
             return -1
 
